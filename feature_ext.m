@@ -36,7 +36,7 @@ function [group1Features, group2Features, group3Features] = feature_ext(bw, bw_i
     group2Features.blockLetters.linePresence = extractLinePresence(bw_vertical, bw_horizontal);
 
     % Right-Angle Corners (Block letters tend to have many sharp right angles)
-    group2Features.blockLetters.angleCorners = extractRightAngleCorners(bw_combined);
+    group2Features.blockLetters.separationConsistency = extractSeparationConsistency(bw_combined);
 
     % Uniform Stroke Lengths (Block letters often have consistent stroke lengths)
     group2Features.blockLetters.strokeLengthConsistency = extractStrokeLengthConsistency(bw);
@@ -55,7 +55,7 @@ function [group1Features, group2Features, group3Features] = feature_ext(bw, bw_i
 
     % Angular Handwriting Features
     % Corner Detection (Angular handwriting has sharp corners and acute angles)
-    group3Features.angular.cornerCount = extractCornerCount(bw_combined);
+    group3Features.angular.edgeOrientationVariance = extractEdgeOrientationVariance(bw);
 
     % Low Circularity (Angular letters have lower circularity due to angular shapes)
     group3Features.angular.circularity = extractCircularity(bw);
@@ -75,102 +75,102 @@ function [group1Features, group2Features, group3Features] = feature_ext(bw, bw_i
 
 end
 
-
 function connectedComponents = extractConnectivity(bw_vertical)
+    % Increase dilation to better connect parts of cursive writing
+    se = strel('disk', 3);  % increased from 2 to 3
+    bw_dilated = imdilate(bw_vertical, se);
+    
     % Label connected components
-    cc = bwconncomp(bw_vertical);
+    cc = bwconncomp(bw_dilated);
     
-    % Get stats
-    stats = regionprops(cc, 'Area');
-    
-    % Filter out small components
-    minArea = 10;
-    validComponents = [stats.Area] > minArea;
-    
-    % Get number of valid components
-    connectedComponents = sum(validComponents);
-    
-    % Normalize by image area
-    totalPixels = numel(bw_vertical);
-    connectedComponents = connectedComponents / totalPixels;
+    % Return the total number of connected components
+    connectedComponents = cc.NumObjects;
 end
 
 function smoothCurvatureVal = extractSmoothCurvature(bw_disk)
-    % Extract boundaries
-    [B, L] = bwboundaries(bw_disk, 'noholes');
+    % Apply closing to smooth out the boundaries
+    se = strel('disk', 2);
+    bw_closed = imclose(bw_disk, se);
     
-    % Initialize
-    totalCurvature = 0;
-    validBoundaryCount = 0;
+    % Optionally, smooth the image using a Gaussian filter
+    bw_smoothed = imgaussfilt(double(bw_closed), 1) > 0.5;
     
-    % Loop through each boundary
-    for k = 1:length(B)
-        boundary = B{k};
-        
-        % Skip small boundaries
-        if size(boundary, 1) < 20
-            continue;
-        end
-        
-        % Get x and y coordinates
-        x = boundary(:, 2);
-        y = boundary(:, 1);
-        
-        % Calculate curvature using finite differences
-        dx = diff(x);
-        dy = diff(y);
-        curvature = abs(diff(atan2(dy, dx)));
-        
-        % Sum curvature
-        totalCurvature = totalCurvature + sum(curvature);
-        validBoundaryCount = validBoundaryCount + 1;
-    end
+    % Extract the boundary of the shapes
+    boundaryImg = bwperim(bw_smoothed);
     
-    % Calculate average curvature
-    if validBoundaryCount > 0
-        avgCurvature = totalCurvature / validBoundaryCount;
-        smoothCurvatureVal = 1 - (avgCurvature / pi); % Normalize
-    else
+    % Using branchpoints as a proxy for corners
+    cornerMask = bwmorph(boundaryImg, 'branchpoints');
+    cornerCount = sum(cornerMask(:));
+    
+    % Compute total boundary length (number of boundary pixels)
+    totalBoundaryPixels = sum(boundaryImg(:));
+    
+    % Define a smoothness metric: higher value means smoother curves
+    if totalBoundaryPixels == 0
         smoothCurvatureVal = 0;
+    else
+        smoothCurvatureVal = 1 - (cornerCount / totalBoundaryPixels);
     end
+
 end
 
 function continuousStrokeVal = extractContinuousStroke(skeleton)
-    % Remove short branches
-    skeleton = bwmorph(skeleton, 'spur', 3);
+    % Remove small spurs from the skeleton to clean up noise
+    skeleton_clean = bwmorph(skeleton, 'spur', 5);  % removes spurs up to 5 pixels long
     
-    % Identify endpoints
-    endpointsImg = bwmorph(skeleton, 'endpoints');
+    % Apply dilation to connect broken strokes (if needed)
+    se = strel('disk', 1);
+    skeleton_dilated = imdilate(skeleton_clean, se);
+    
+    % Identify endpoints in the cleaned and dilated skeleton
+    endpointsImg = bwmorph(skeleton_dilated, 'endpoints');
     endpointCount = sum(endpointsImg(:));
     
-    % Measure total skeleton length
-    skeletonLength = sum(skeleton(:));
+    % Measure total skeleton length (number of skeleton pixels)
+    skeletonLength = sum(skeleton_dilated(:));
     
-    % Define a continuity measure
+    % Define a continuity measure: higher value indicates more continuous strokes
     if skeletonLength == 0
-        continuousStrokeVal = 0;
+        continuousStrokeVal = 0; % No skeleton => no strokes
     else
         continuousStrokeVal = 1 - (endpointCount / skeletonLength);
     end
 end
 
 function separateLetters = extractSeparateLetters(bw_noiseRemoved)
-    % EXTRACTSEPARATELETTERS  Counts the number of connected components in the
-    % binary image (e.g., after noise removal). Each connected component typically
-    % corresponds to a separate letter in print handwriting.
-    %
-    % INPUT:
-    %   bw_noiseRemoved : Binary image after noise removal, where letters should
-    %                     be clearly separated in print handwriting.
-    %
-    % OUTPUT:
-    %   separateLetters : The total number of connected components (separate letters).
+    % First erode slightly to separate touching letters
+    se_erode = strel('disk', 1);
+    bw_eroded = imerode(bw_noiseRemoved, se_erode);
+
+    % Then reconstruct the letters while maintaining separation
+    bw_reconstructed = imreconstruct(bw_eroded, bw_noiseRemoved);
 
     % Label the connected components in the image
-    cc = bwconncomp(bw_noiseRemoved);
+    cc = bwconncomp(bw_reconstructed);
 
-    % Return the number of connected components (separate letters)
-    separateLetters = cc.NumObjects;
+    % Get areas to filter out noise
+    stats = regionprops(cc, 'Area');
+
+    % Determine a reasonable threshold (e.g., 20% of the median area)
+    areas = [stats.Area];
+
+    if isempty(areas)
+        separateLetters = 0;
+        return;
+    end
+
+    medianArea = median(areas);
+    minArea = max(10, medianArea * 0.2);
+
+    % Count only components above the minimum area
+    validComponents = sum(areas > minArea);
+
+    % Normalize by image area for scale invariance
+    totalPixels = numel(bw_noiseRemoved);
+    separateLetters = validComponents * 100 / sqrt(totalPixels);
+
+    % Cap the value to a reasonable range
+    separateLetters = min(separateLetters, 10);
 end
 
 function uprightOrientation = extractMinimalSlant(bw_noiseRemoved)
@@ -241,99 +241,103 @@ function balancedStrokeShapes = extractBalancedStrokeShapes(bw_combined)
 end
 
 function linePresence = extractLinePresence(bw_vertical, bw_horizontal)
-    % extractLinePresence computes a simple metric indicating the presence
-    % of straight lines in the image. It averages the ratio of foreground pixels
-    % in the vertical and horizontal images relative to image area.
-    %
-    % Input:
-    %   bw_vertical   : Binary image emphasizing vertical lines.
-    %   bw_horizontal : Binary image emphasizing horizontal lines.
-    %
-    % Output:
-    %   linePresence  : A value between 0 and 1 representing line presence.
-
+    % Average the ratio of foreground pixels in vertical and horizontal images
     totalPixels = numel(bw_vertical);
     verticalScore = sum(bw_vertical(:)) / totalPixels;
     horizontalScore = sum(bw_horizontal(:)) / totalPixels;
-    % Average the scores; higher values indicate more straight lines.
+
+    % Average the scores to indicate overall presence of straight lines
     linePresence = (verticalScore + horizontalScore) / 2;
 end
 
-function angleCorners = extractRightAngleCorners(bw_combined)
-    % extractRightAngleCorners estimates the density of right-angle (or sharp)
-    % corners in the image by using MATLAB's built-in corner detector.
-    %
-    % Input:
-    %   bw_combined : Binary image that combines horizontal and vertical closing.
-    %
-    % Output:
-    %   angleCorners: A normalized value reflecting the number of detected corners.
-    
-    % Use Harris corner detection (or other method) to detect corners.
-    detectedCorners = corner(bw_combined, 'Harris');
-    % Normalize the corner count by the image area.
-    totalPixels = numel(bw_combined);
-    angleCorners = size(detectedCorners, 1) / totalPixels;
+function separationConsistency = extractSeparationConsistency(bw)
+    % Find connected components of the letters
+    cc = bwconncomp(bw);
+    stats = regionprops(cc, 'BoundingBox');
+
+    % Measure the horizontal spacing between bounding boxes of consecutive letters
+    separations = [];
+    for i = 2:numel(stats)
+        prevX = stats(i-1).BoundingBox(1) + stats(i-1).BoundingBox(3);
+        currX = stats(i).BoundingBox(1);
+        separations = [separations, currX - prevX]; % Horizontal distance
+    end
+
+    % Measure the consistency of these separations
+    if numel(separations) > 0
+        separationConsistency = std(separations) / mean(separations);
+    else
+        separationConsistency = 0;
+    end
 end
 
 function strokeLengthConsistency = extractStrokeLengthConsistency(bw)
-    % extractStrokeLengthConsistency measures how uniform the stroke lengths
-    % are in the handwriting. A consistent stroke length suggests regular,
-    % uniform block letters.
-    %
-    % Input:
-    %   bw : Binary image of the handwriting (not necessarily skeletonized).
-    %
-    % Output:
-    %   strokeLengthConsistency : A value between 0 and 1. Values closer to 1
-    %                             denote more uniform stroke lengths.
-    
-    % Extract the skeleton to measure stroke lengths.
+    % Extract the skeleton of the image
     skeleton = bwskel(bw);
+
+    % Get connected components of the skeleton
     cc = bwconncomp(skeleton);
     stats = regionprops(cc, 'Area');
     areas = [stats.Area];
-    
+
     if isempty(areas) || mean(areas) == 0
         strokeLengthConsistency = 0;
     else
-        % Compute coefficient of variation as a measure of inconsistency.
+        % Coefficient of variation for the areas (stroke lengths)
         cv = std(areas) / mean(areas);
-        % Define consistency as the inverse of variability, normalized to [0,1].
-        strokeLengthConsistency = max(0, min(1, 1 - cv));
+        strokeLengthConsistency = max(0, min(1, 1 - cv)); % Normalize to [0,1]
     end
 end
 
 function avgSlantAngle = extractSlantAngle(bw)
-    % extractSlantAngle computes the average orientation (in degrees)
-    % from connected components in the binary image.
-    %
-    % Input:
-    %   bw - Binary image (typically after noise removal)
-    %
-    % Output:
-    %   avgSlantAngle - Average slant angle (in degrees). Positive values
-    %                   indicate counter-clockwise tilt.
+    % First apply word segmentation through morphological operations
+    % Create structuring element for horizontal dilation to connect letters
+    se_h = strel('rectangle', [1, 5]);
     
-    % Obtain region properties from connected components
-    stats = regionprops(bw, 'Orientation', 'Area');
-    if isempty(stats)
+    % Horizontally dilate to connect letters within words
+    bw_words = imdilate(bw, se_h);
+    
+    % Apply vertical erosion to separate words if they're too close
+    se_v = strel('rectangle', [3, 1]);
+    bw_words = imerode(bw_words, se_v);
+    
+    % Analyze each word separately for more accurate slant measurement
+    [wordLabels, numWords] = bwlabel(bw_words);
+    
+    % Initialize array to store orientations
+    orientations = zeros(numWords, 1);
+    areas = zeros(numWords, 1);
+    
+    % Measure orientation of each word
+    for i = 1:numWords
+        wordMask = (wordLabels == i);
+        wordArea = sum(wordMask(:));
+        
+        % Skip very small components (likely noise)
+        if wordArea < 50
+            continue;
+        end
+        
+        % Extract the original pixels for this word
+        wordOriginal = bw .* wordMask;
+        
+        % Get orientation for this word
+        stats = regionprops(wordOriginal, 'Orientation', 'Area');
+        if ~isempty(stats)
+            orientations(i) = stats(1).Orientation;
+            areas(i) = stats(1).Area;
+        end
+    end
+    
+    % Filter out zeros (skipped words)
+    validIdx = areas > 0;
+    if ~any(validIdx)
         avgSlantAngle = 0;
         return;
     end
     
-    % Filter out very small components (noise) by thresholding area
-    areas = [stats.Area];
-    minAreaThreshold = 0.05 * max(areas);
-    validIdx = areas >= minAreaThreshold;
-    if ~any(validIdx)
-        validIdx = true(1, length(stats));
-    end
-    
-    orientations = [stats(validIdx).Orientation];
-    
-    % Calculate the average orientation as the slant angle.
-    avgSlantAngle = mean(orientations);
+    % Calculate weighted average by area
+    avgSlantAngle = sum(orientations(validIdx) .* areas(validIdx)) / sum(areas(validIdx));
 end
 
 function tiltUniformity = extractLetterTiltUniformity(bw_inverted)
@@ -346,24 +350,26 @@ function tiltUniformity = extractLetterTiltUniformity(bw_inverted)
     %
     % Output:
     %   tiltUniformity - Uniformity score (1 means all letters have almost the same tilt).
-    
+
     % Use regionprops to get orientations (filter with area threshold)
     stats = regionprops(bw_inverted, 'Orientation', 'Area');
+
     if isempty(stats)
         tiltUniformity = 1;
         return;
     end
-    
+
     areas = [stats.Area];
     minAreaThreshold = 0.05 * max(areas);
     validIdx = areas >= minAreaThreshold;
+
     if ~any(validIdx)
         validIdx = true(1, length(stats));
     end
-    
+
     orientations = [stats(validIdx).Orientation];
     stdOrient = std(orientations);
-    
+
     % Assume a maximum expected standard deviation of 45°.
     % Uniformity is higher when std is lower.
     tiltUniformity = max(0, 1 - (stdOrient / 45));
@@ -379,133 +385,134 @@ function verticalStrokeCount = extractVerticalStrokeCount(bw_vertical)
     %
     % Output:
     %   verticalStrokeCount - Total count of connected components that behave as vertical strokes.
-    
+
     cc = bwconncomp(bw_vertical);
     stats = regionprops(cc, 'BoundingBox');
-    
+
     count = 0;
+
     for i = 1:length(stats)
         bbox = stats(i).BoundingBox; % Format: [x, y, width, height]
         % Consider a component vertical if its height is at least 3 times its width.
         if bbox(4) / bbox(3) > 3
             count = count + 1;
         end
+
     end
+
     verticalStrokeCount = count;
 end
 
-function cornerCount = extractCornerCount(bw_combined)
-    % extractCornerCount detects and counts the number of sharp corners
-    % in handwriting using Harris corner detection.
-    %
-    % Input:
-    %   bw_combined - Binary image after noise removal and morphological operations.
-    %
-    % Output:
-    %   cornerCount - Total number of detected corners in the handwriting.
+function orientationStd = extractEdgeOrientationVariance(bw)
+    % Compute the gradient magnitude and direction using Sobel operators
+    [Gmag, Gdir] = imgradient(bw);
     
-    % Apply Harris corner detection with appropriate sensitivity
-    corners = corner(bw_combined, 'Harris', 'Sensitivity', 0.15);
+    % Threshold the gradient magnitude to focus on strong edges
+    threshold = 0.1 * max(Gmag(:));
+    idx = Gmag > threshold;
     
-    % Get the total number of detected corners
-    cornerCount = size(corners, 1);
+    % Extract the gradient orientations (in degrees) for strong edges
+    orientations = Gdir(idx);
     
-    % Normalize by image size if needed
-    % totalPixels = numel(bw_combined);
-    % cornerCount = cornerCount / sqrt(totalPixels) * 100;
+    % Convert orientations to radians for proper variance computation
+    orientations_rad = deg2rad(orientations);
+    
+    % Compute the standard deviation of the gradient orientations
+    orientationStd = std(orientations_rad);
 end
 
 function circularity = extractCircularity(bw)
-    % extractCircularity calculates the average circularity of letters
-    % in the handwriting. Angular handwriting has lower circularity scores.
-    %
-    % Input:
-    %   bw - Binary image of the handwriting.
-    %
-    % Output:
-    %   circularity - Average circularity measure [0-1]. Lower values
-    %                 indicate more angular shapes.
-    
+
+    % --- Optional Pre-smoothing (to remove noise and unify shapes) ---
+    se = strel('disk', 2);
+    bw_smooth = imopen(bw, se);
+    bw_smooth = imclose(bw_smooth, se);
+
     % Label connected components
-    cc = bwconncomp(bw);
-    
+    cc = bwconncomp(bw_smooth);
+
     % If no components, return 0 (no circularity)
     if cc.NumObjects == 0
         circularity = 0;
         return;
     end
-    
+
     % Get region properties needed for circularity calculation
     stats = regionprops(cc, 'Area', 'Perimeter');
-    
-    % Filter out very small components (likely noise)
     areas = [stats.Area];
     perimeters = [stats.Perimeter];
-    
-    % Remove components that are too small
-    minSize = 10; % Minimum area to consider
+
+    % --- Step 1: Stricter area threshold ---
+    minSize = 30;  % Increase from 10 to 30 to ignore small specks
     validIdx = areas > minSize & perimeters > 0;
-    
+
     if ~any(validIdx)
         circularity = 0;
         return;
     end
-    
+
     areas = areas(validIdx);
     perimeters = perimeters(validIdx);
-    
-    % Calculate circularity for each component
+
+    % --- Step 2: Compute circularity for each component ---
     % Circularity = 4π × Area / Perimeter²
-    % Perfect circle has circularity of 1, more angular shapes are closer to 0
-    individualCircularities = 4 * pi * areas ./ (perimeters.^2);
-    
-    % Some values might be > 1 due to discretization errors, cap at 1
+    individualCircularities = 4 * pi * areas ./ (perimeters .^ 2);
+
+    % Cap any discretization overshoot
     individualCircularities = min(individualCircularities, 1);
-    
-    % Calculate the average circularity, weighted by area
+
+    % --- Step 3: Compute weighted average circularity ---
     circularity = sum(individualCircularities .* areas) / sum(areas);
 end
 
 function cornerDensity = extractCornerDensity(bw_combined)
-    % extractCornerDensity calculates the density of corners in handwriting.
-    % Angular handwriting has a higher corner density.
+    % extractCornerDensity calculates the density of strong corners
+    % in handwriting. Angular handwriting has a higher corner density.
     %
     % Input:
-    %   bw_combined - Binary image after noise removal and morphological operations.
+    %   bw_combined - Binary image after noise removal and morphological ops.
     %
     % Output:
-    %   cornerDensity - A measure of corners per connected component.
-    
+    %   cornerDensity - A measure of corners per unit area (0-1 after normalization).
+
     % Get connected components
     cc = bwconncomp(bw_combined);
-    
+
     if cc.NumObjects == 0
         cornerDensity = 0;
         return;
     end
-    
-    % Detect corners using Harris corner detector
-    corners = corner(bw_combined, 'Harris', 'Sensitivity', 0.15);
+
+    % --- Step 1: Morphological smoothing ---
+    se = strel('disk', 2);
+    bw_smooth = imopen(bw_combined, se);
+    bw_smooth = imclose(bw_smooth, se);
+
+    % --- Step 2: Stricter corner detection ---
+    corners = corner(bw_smooth, 'MinimumEigenvalue', 'QualityLevel', 0.1);
     totalCorners = size(corners, 1);
-    
-    % Calculate total area of all components
+
+    % --- Step 3: Compute area of all connected components ---
     stats = regionprops(cc, 'Area');
     totalArea = sum([stats.Area]);
-    
+
     if totalArea == 0
         cornerDensity = 0;
         return;
     end
-    
-    % Calculate corners per unit area
-    cornerDensity = totalCorners / sqrt(totalArea);
-    
-    % Normalize to a reasonable range (0-1)
-    cornerDensity = min(cornerDensity / 0.1, 1);
+
+    % --- Step 4: Calculate corner density ---
+    % Using corners / sqrt(area) is one approach, but you can also do corners / area
+    cornerDensityRaw = totalCorners / sqrt(totalArea);
+
+    % --- Step 5: Stricter normalization ---
+    % Increase the divisor to reduce over-inflation. If cornerDensityRaw is large,
+    % it will saturate at 1. Adjust 0.05 as needed based on your data.
+    cornerDensity = min(cornerDensityRaw / 0.05, 1);
 end
 
 function strokeWidthVariation = extractStrokeWidthVariation(bw)
-    % extractStrokeWidthVariation detects the variation in stroke width 
+    % extractStrokeWidthVariation detects the variation in stroke width
     % characteristic of modern calligraphy with thick-thin contrasts.
     %
     % Input:
@@ -514,36 +521,37 @@ function strokeWidthVariation = extractStrokeWidthVariation(bw)
     % Output:
     %   strokeWidthVariation - Measure of stroke width variation [0-1]
     %                         Higher values indicate more thick-thin contrast
-    
+
     % Calculate distance transform for stroke width estimation
     distMap = bwdist(~bw);
-    
+
     % Get non-zero values which represent stroke width at each point
     strokeWidths = distMap(distMap > 0);
-    
+
     if isempty(strokeWidths)
         strokeWidthVariation = 0;
         return;
     end
-    
+
     % Calculate coefficient of variation (CV = standard deviation / mean)
     meanWidth = mean(strokeWidths);
     stdWidth = std(strokeWidths);
-    
+
     if meanWidth == 0
         strokeWidthVariation = 0;
     else
         % Normalize CV to a 0-1 scale (typical calligraphy has high variation)
         cv = stdWidth / meanWidth;
-        
+
         % Map CV to a 0-1 scale, assuming CV values typically range from 0 to 1
         % for handwriting (higher for calligraphy)
         strokeWidthVariation = min(cv / 0.8, 1);
     end
+
 end
 
 function flourishes = extractFlourishes(bw_disk)
-    % extractFlourishes detects decorative elements like loops and extended strokes 
+    % extractFlourishes detects decorative elements like loops and extended strokes
     % characteristic of calligraphy flourishes.
     %
     % Input:
@@ -551,76 +559,89 @@ function flourishes = extractFlourishes(bw_disk)
     %
     % Output:
     %   flourishes - Measure of flourish presence [0-1]
-    
+    % First, perform closing to connect parts of flourishes
+    se_close = strel('disk', 2);
+    bw_closed = imclose(bw_disk, se_close);
+
+    % Then, perform opening to remove small noise
+    se_open = strel('disk', 1);
+    bw_processed = imopen(bw_closed, se_open);
+
+    % Rest of the function remains the same
     % 1. Skeletonize the image to analyze the structure
-    skel = bwskel(bw_disk);
-    
+    skel = bwskel(bw_processed);
+
+    % Continue with existing code...
     % 2. Find branch points (junctions) and endpoints
     branchPoints = bwmorph(skel, 'branchpoints');
     endPoints = bwmorph(skel, 'endpoints');
-    
+
     numBranchPoints = sum(branchPoints(:));
     numEndPoints = sum(endPoints(:));
-    
+
     % 3. Calculate total skeleton length
     skelLength = sum(skel(:));
-    
+
     if skelLength == 0
         flourishes = 0;
         return;
     end
-    
+
     % 4. Analyze connected components
     cc = bwconncomp(bw_disk);
     stats = regionprops(cc, 'BoundingBox', 'Area', 'Perimeter');
-    
+
     % Calculate expected baseline height
     heights = zeros(length(stats), 1);
+
     for i = 1:length(stats)
         heights(i) = stats(i).BoundingBox(4);
     end
+
     medHeight = median(heights(heights > 5)); % Filter out noise
-    
+
     if isempty(medHeight) || medHeight == 0
         flourishes = 0;
         return;
     end
-    
+
     % 5. Identify potential flourishes by:
     %    - Components with high perimeter-to-area ratio (extended strokes)
     %    - Components much larger than median height (extended decorative elements)
     flourishScore = 0;
+
     for i = 1:length(stats)
         area = stats(i).Area;
         perim = stats(i).Perimeter;
         height = stats(i).BoundingBox(4);
-        
+
         % Skip very small components
         if area < 20
             continue;
         end
-        
+
         % Calculate elongation factor
-        elongation = perim^2 / (4 * pi * area);
-        
+        elongation = perim ^ 2 / (4 * pi * area);
+
         % Check for height exceeding typical character height
         heightRatio = height / medHeight;
-        
+
         % Add to flourish score if elongated or much taller
         if elongation > 3 || heightRatio > 1.5
-            flourishScore = flourishScore + area * (elongation/10 + heightRatio/2);
+            flourishScore = flourishScore + area * (elongation / 10 + heightRatio / 2);
         end
+
     end
-    
+
     % 6. Normalize flourish score based on total image area
     totalArea = numel(bw_disk);
     flourishes = min(flourishScore / (totalArea * 0.05), 1);
-    
+
     % 7. Enhance with branch point information
     % More branch points relative to endpoints can indicate decorative elements
     branchToEndRatio = numBranchPoints / max(1, numEndPoints);
-    flourishes = flourishes * 0.7 + min(branchToEndRatio/3, 1) * 0.3;
-    
+    flourishes = flourishes * 0.7 + min(branchToEndRatio / 3, 1) * 0.3;
+
     flourishes = min(flourishes, 1);
 end
 
@@ -634,74 +655,75 @@ function smoothCurves = extractSmoothCurves(bw_disk)
     % Output:
     %   smoothCurves - Measure of curve smoothness [0-1]
     %                  Higher values indicate smoother curves
-    
+
     % 1. Get boundaries of all objects
     [boundaries, ~] = bwboundaries(bw_disk);
-    
+
     if isempty(boundaries)
         smoothCurves = 0;
         return;
     end
-    
+
     totalCurvature = 0;
     totalPoints = 0;
-    
+
     % 2. Process each boundary to calculate curvature
     for k = 1:length(boundaries)
         boundary = boundaries{k};
-        
+
         % Skip very small boundaries
         if size(boundary, 1) < 10
             continue;
         end
-        
+
         % Get x and y coordinates
         x = boundary(:, 2);
         y = boundary(:, 1);
-        
+
         % Smooth the boundary slightly to reduce pixelation effects
         x = smooth(x, 5);
         y = smooth(y, 5);
-        
+
         % Calculate local curvature using finite differences
         n = length(x);
         curvature = zeros(n, 1);
-        
-        for i = 2:(n-1)
+
+        for i = 2:(n - 1)
             % Finite difference approximation of curvature
-            dx1 = x(i) - x(i-1);
-            dy1 = y(i) - y(i-1);
-            dx2 = x(i+1) - x(i);
-            dy2 = y(i+1) - y(i);
-            
+            dx1 = x(i) - x(i - 1);
+            dy1 = y(i) - y(i - 1);
+            dx2 = x(i + 1) - x(i);
+            dy2 = y(i + 1) - y(i);
+
             % Angle change - less change means smoother curve
             angle1 = atan2(dy1, dx1);
             angle2 = atan2(dy2, dx2);
             angleDiff = abs(angle2 - angle1);
-            
+
             % Normalize to [0, π]
-            angleDiff = mod(angleDiff + pi, 2*pi) - pi;
-            
+            angleDiff = mod(angleDiff + pi, 2 * pi) - pi;
+
             curvature(i) = abs(angleDiff);
         end
-        
+
         % Fill in boundary points
         curvature(1) = curvature(2);
-        curvature(n) = curvature(n-1);
-        
+        curvature(n) = curvature(n - 1);
+
         % Add to total
         totalCurvature = totalCurvature + sum(curvature);
         totalPoints = totalPoints + n;
     end
-    
+
     if totalPoints == 0
         smoothCurves = 0;
     else
         % Calculate average curvature
         avgCurvature = totalCurvature / totalPoints;
-        
+
         % Convert average curvature to smoothness measure
         % Lower curvature means smoother curves
-        smoothCurves = max(0, 1 - (avgCurvature / (pi/2)));
+        smoothCurves = max(0, 1 - (avgCurvature / (pi / 2)));
     end
+
 end

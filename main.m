@@ -95,7 +95,17 @@ function handwritingAnalysisGUI()
         if ~exist(savePath, 'dir')
             mkdir(savePath);
         end
+        % Save each processed image with a descriptive filename
+        imwrite(bw, fullfile(savePath, 'binary.png'));
+        imwrite(bw_inverted, fullfile(savePath, 'inverted.png'));
+        imwrite(bw_noiseRemoved, fullfile(savePath, 'noise_removed.png'));
+        imwrite(bw_disk, fullfile(savePath, 'morphology_disk.png'));
+        imwrite(bw_horizontal, fullfile(savePath, 'horizontal_elements.png'));
+        imwrite(bw_vertical, fullfile(savePath, 'vertical_elements.png'));
+        imwrite(skeleton, fullfile(savePath, 'skeleton.png'));
 
+        % Display confirmation message
+        disp('Processed images saved to: ' + string(savePath));
         % Display processed images
         imshow(bw_noiseRemoved, 'Parent', processedAxes);
         title(processedAxes, 'Processed Image');
@@ -139,7 +149,7 @@ function handwritingAnalysisGUI()
         % Group 2: Block Letters & Slanted Handwriting
         featLines{lineIdx} = '=== BLOCK LETTER FEATURES ==='; lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Line Presence: %.2f', group2.blockLetters.linePresence); lineIdx = lineIdx + 1;
-        featLines{lineIdx} = sprintf('Angle Corners: %.2f', group2.blockLetters.angleCorners); lineIdx = lineIdx + 1;
+        featLines{lineIdx} = sprintf('Separation Consistency: %.2f', group2.blockLetters.separationConsistency); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Stroke Length Consistency: %.2f', group2.blockLetters.strokeLengthConsistency); lineIdx = lineIdx + 1;
         featLines{lineIdx} = ' '; lineIdx = lineIdx + 1;
         
@@ -152,7 +162,7 @@ function handwritingAnalysisGUI()
         
         % Group 3: Angular Features
         featLines{lineIdx} = '=== ANGULAR FEATURES ==='; lineIdx = lineIdx + 1;
-        featLines{lineIdx} = sprintf('Corner Count: %.2f', group3.angular.cornerCount); lineIdx = lineIdx + 1;
+        featLines{lineIdx} = sprintf('Edge Orientation Variance: %.2f', group3.angular.edgeOrientationVariance); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Circularity: %.2f', group3.angular.circularity); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Corner Density: %.2f', group3.angular.cornerDensity); lineIdx = lineIdx + 1;
         featLines{lineIdx} = ' '; lineIdx = lineIdx + 1;
@@ -186,7 +196,7 @@ function handwritingAnalysisGUI()
         
         % Block letters score
         styleScores.block = group2.blockLetters.linePresence * 0.4 + ...
-                           group2.blockLetters.angleCorners * 0.3 + ...
+                           group2.blockLetters.separationConsistency * 0.3 + ...
                            group2.blockLetters.strokeLengthConsistency * 0.3;
         
         % Slanted score
@@ -195,7 +205,7 @@ function handwritingAnalysisGUI()
                              (1 - group2.slanted.verticalStrokeCount/10) * 0.2;
         
         % Angular score
-        styleScores.angular = group3.angular.cornerCount * 0.3 + ...
+        styleScores.angular = group3.angular.edgeOrientationVariance * 0.3 + ...
                              (1 - group3.angular.circularity) * 0.4 + ...
                              group3.angular.cornerDensity * 0.3;
         
