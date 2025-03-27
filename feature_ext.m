@@ -34,8 +34,8 @@ function [group1Features, group2Features, group3Features] = feature_ext(bw, bw_i
     % Horizontal/Vertical Line Presence (block letters have many straight strokes)
     group2Features.blockLetters.linePresence = extractLinePresence(bw_vertical, bw_horizontal);
 
-    % Consistent Separation (even spacing between letters)
-    group2Features.blockLetters.separationConsistency = extractSeparationConsistency(bw_combined);
+    % Dominant Horizontal/Vertical Lines (strong indicator of block letters)
+    group2Features.blockLetters.hvDominance = extractDominantHVLines(bw);
 
     % Uniform Stroke Lengths (consistent stroke lengths in letters)
     group2Features.blockLetters.strokeLengthConsistency = extractStrokeLengthConsistency(bw);
@@ -71,6 +71,9 @@ function [group1Features, group2Features, group3Features] = feature_ext(bw, bw_i
 
     % Smooth Curves (flowing, smooth curves in calligraphy)
     group3Features.calligraphy.smoothCurves = extractSmoothCurves(bw_disk);
+
+    % Extended Letter accending and decending (calligraphy)
+    group3Features.calligraphy.extendedAscDescMeasure = extractExtendedAscDesc(bw);
 end
 
 % Helper Functions for Segmentation
@@ -123,7 +126,7 @@ function letterSegments = segmentHandwriting(bw)
 
 end
 
-% Cursive Features
+% Cursive Features Done
 
 function connectivity = extractConnectivity(bw_vertical)
     % Compute connected components per word to gauge letter connectivity (cursive).
@@ -210,7 +213,7 @@ function continuousStrokeVal = extractContinuousStroke(skeleton)
 
 end
 
-% Print Features
+% Print Features Done
 
 function separateLetters = extractSeparateLetters(bw_noiseRemoved)
     % Measures how separated the letters are (print style has high separation).
@@ -373,47 +376,48 @@ function linePresence = extractLinePresence(bw_vertical, bw_horizontal)
     linePresence = max(0, min(1, linePresence));
 end
 
-function separationConsistency = extractSeparationConsistency(bw)
-    % Checks the consistency of spacing between letters (for block handwriting).
-    % Ideally, spaces between consecutive letters (within words) should be uniform.
+function hvDominance = extractDominantHVLines(bw)
+    % extractDominantHVLines measures how many edges/strokes are near 0 or 90 deg
+    % indicative of block letters with strong horizontal/vertical lines.
+    %
+    % Input:
+    %   bw - binary image of the handwriting (white on black)
+    % Output:
+    %   hvDominance - a ratio in [0..1], higher = more block-like HV lines
 
-    % Slight erosion to separate any touching letters
-    se = strel('disk', 1);
-    bw_eroded = imerode(bw, se);
+    % 1) Detect edges
+    edgesImg = edge(bw, 'canny');
 
-    % Get bounding boxes of connected components (letters or letter groups)
-    cc = bwconncomp(bw_eroded);
-    stats = regionprops(cc, 'BoundingBox');
+    % 2) Compute gradient orientation at edge pixels
+    [~, Gdir] = imgradient(edgesImg);
 
-    if isempty(stats)
-        separationConsistency = 1;
+    % Convert angles to [-180, 180]
+    Gdir = mod(Gdir + 180, 360) - 180;
+
+    % 3) Count total edge pixels
+    totalEdgePixels = sum(edgesImg(:));
+
+    if totalEdgePixels < 1
+        hvDominance = 0;
         return;
     end
 
-    % Sort bounding boxes by their x-coordinate (left to right)
-    boxes = cat(1, stats.BoundingBox);
-    [~, idx] = sort(boxes(:, 1));
-    boxes = boxes(idx, :);
+    angles = Gdir(edgesImg);
 
-    % Compute gaps between successive bounding boxes
-    gaps = [];
+    % 4) Define a tolerance for "near horizontal" or "near vertical"
+    tolerance = 15; % degrees
 
-    for i = 2:size(boxes, 1)
-        prevRight = boxes(i - 1, 1) + boxes(i - 1, 3);
-        gap = boxes(i, 1) - prevRight;
-        gaps = [gaps, max(gap, 0)]; %#ok<AGROW>
-    end
+    % near horizontal => angle in [-tolerance, tolerance]
+    isHorizontal = (angles >= -tolerance & angles <= tolerance);
 
-    if isempty(gaps)
-        separationConsistency = 1; % Only one component => perfectly consistent
-    else
-        % Consistency measured by variability of gaps: lower variance = more consistent
-        meanGap = mean(gaps);
-        stdGap = std(gaps);
-        consistencyRatio = stdGap / (meanGap + eps);
-        separationConsistency = max(0, min(1, 1 - consistencyRatio));
-    end
+    % near vertical => angle in [90-tolerance, 90+tolerance] or [-90-tolerance, -90+tolerance]
+    isVertical = ((angles >= 90 - tolerance & angles <= 90 + tolerance) | ...
+        (angles >= -90 - tolerance & angles <= -90 + tolerance));
 
+    hvCount = sum(isHorizontal | isVertical);
+
+    % 5) Ratio of HV edges to total edges
+    hvDominance = hvCount / totalEdgePixels;
 end
 
 function strokeLengthConsistency = extractStrokeLengthConsistency(bw)
@@ -451,53 +455,57 @@ function strokeLengthConsistency = extractStrokeLengthConsistency(bw)
     strokeLengthConsistency = mean(consistencyScores);
 end
 
-% Slanted Handwriting Features
+% Slanted Handwriting Features Done
 
 function avgSlantAngle = extractSlantAngle(bw)
-    % Computes the average slant angle of the handwriting in degrees.
-    % We segment by words to avoid mixing lines from different words.
-
+    % Improved slant angle extraction using PCA on word segments.
+    % Segment the image into words first.
     wordSegments = segmentWords(bw);
-    orientations = [];
-    areas = [];
 
     if isempty(wordSegments)
-        % Fallback: treat entire image if segmentation fails
-        stats = regionprops(bw, 'Orientation', 'Area');
-
-        if isempty(stats)
-            avgSlantAngle = 0;
-            return;
-        end
-
-        for i = 1:length(stats)
-            orientations(end + 1, 1) = stats(i).Orientation;
-            areas(end + 1, 1) = stats(i).Area;
-        end
-
-    else
-        % For each word, take the primary orientation of that word
-        for i = 1:length(wordSegments)
-            seg = wordSegments{i};
-            stats = regionprops(seg, 'Orientation', 'Area');
-
-            if ~isempty(stats)
-                % Use the first (largest) component's orientation as word angle
-                orientations(end + 1, 1) = stats(1).Orientation;
-                areas(end + 1, 1) = stats(1).Area;
-            end
-
-        end
-
+        wordSegments = {bw}; % Fallback: use entire image
     end
 
-    % Compute area-weighted average orientation
-    validIdx = areas > 0;
+    weightedAngles = [];
+    segmentAreas = [];
 
-    if ~any(validIdx)
+    for i = 1:length(wordSegments)
+        seg = wordSegments{i};
+        % Get coordinates of foreground pixels (assuming text is white)
+        [r, c] = find(seg);
+
+        if numel(r) < 10
+            continue;
+        end
+
+        % Form coordinate matrix [x y] where x = column, y = row
+        coords = [c, r];
+        % Compute PCA on the coordinates
+        mu = mean(coords, 1);
+        C = cov(double(coords));
+        [V, ~] = eig(C);
+        % Principal component is the eigenvector with maximum eigenvalue.
+        [~, idx] = max(diag(C)); % This method is not reliable; use eigs or sort eigenvalues.
+        % Instead, compute eigenvalues and sort them:
+        [V, D] = eig(C);
+        [eigVals, sortIdx] = sort(diag(D), 'descend');
+        principalVec = V(:, sortIdx(1));
+
+        % Compute angle (in degrees) between principal vector and horizontal axis
+        angleRad = atan2(principalVec(2), principalVec(1));
+        angleDeg = abs(rad2deg(angleRad));
+        % For slanted handwriting, angles near 0 indicate near-horizontal; we expect higher values.
+        % Weight this segment's angle by its number of foreground pixels.
+        segArea = numel(r);
+        weightedAngles(end + 1, 1) = angleDeg; %#ok<AGROW>
+        segmentAreas(end + 1, 1) = segArea; %#ok<AGROW>
+    end
+
+    if isempty(weightedAngles)
         avgSlantAngle = 0;
     else
-        avgSlantAngle = sum(orientations(validIdx) .* areas(validIdx)) / sum(areas(validIdx));
+        % Compute area-weighted average of the slant angles.
+        avgSlantAngle = sum(weightedAngles .* segmentAreas) / sum(segmentAreas);
     end
 
 end
@@ -959,6 +967,64 @@ function smoothCurves = extractSmoothCurves(bw_disk)
         smoothCurves = 0;
     else
         smoothCurves = totalSmoothScore / totalArea;
+    end
+
+end
+
+function extendedAscDescMeasure = extractExtendedAscDesc(bw)
+    % extractExtendedAscDesc measures how much letters extend beyond
+    % a core "x-height", typical of modern calligraphy ascenders & descenders.
+    %
+    % Input:
+    %   bw - Binary image (white text on black) of the handwriting
+    %
+    % Output:
+    %   extendedAscDescMeasure - [0..1 or higher] measure of extended ascenders/descenders
+
+    letterSegments = segmentHandwriting(bw); % from your existing code
+
+    if isempty(letterSegments)
+        extendedAscDescMeasure = 0;
+        return;
+    end
+
+    ratioSum = 0;
+    totalLetters = 0;
+
+    for i = 1:length(letterSegments)
+        seg = letterSegments{i};
+        % bounding box
+        stats = regionprops(seg, 'BoundingBox', 'Area');
+
+        if isempty(stats)
+            continue;
+        end
+
+        % If multiple components in this segment, pick the largest area
+        [~, maxIdx] = max([stats.Area]);
+        bbox = stats(maxIdx).BoundingBox; % [x, y, width, height]
+        letterHeight = bbox(4);
+
+        % Heuristic: approximate x-height by ignoring top/bottom ~10%
+        % so "core" height ~ 80% of bounding box
+        % The ratio: extended portion / core portion
+        % If letterHeight is small or near 0, skip.
+        if letterHeight < 5
+            continue;
+        end
+
+        coreHeight = 0.8 * letterHeight;
+        extendedPortion = letterHeight - coreHeight; % top + bottom
+        % ratio > 0 means some ascender/descender
+        ratio = extendedPortion / coreHeight; % e.g. 0.5 means ascenders are 50 % of x-height
+        ratioSum = ratioSum + ratio;
+        totalLetters = totalLetters + 1;
+    end
+
+    if totalLetters == 0
+        extendedAscDescMeasure = 0;
+    else
+        extendedAscDescMeasure = ratioSum / totalLetters;
     end
 
 end

@@ -12,10 +12,10 @@ function handwritingAnalysisGUI()
     % Create panels for images
     originalPanel = uipanel(fig, 'Title', 'Original Image', 'Position', [50, 400, 450, 230]);
     processedPanel = uipanel(fig, 'Title', 'Processed Image', 'Position', [500, 400, 450, 230]);
-    
+
     % Create panel for feature results
     featurePanel = uipanel(fig, 'Title', 'Handwriting Features', 'Position', [50, 150, 450, 230]);
-    
+
     % Create text area for feature results display
     featureText = uitextarea(featurePanel, 'Position', [10, 10, 430, 190], 'Editable', 'off');
     featureText.FontName = 'Consolas'; % Monospaced font for better alignment
@@ -23,7 +23,7 @@ function handwritingAnalysisGUI()
 
     % Create panel for style classification results
     stylePanel = uipanel(fig, 'Title', 'Style Classification', 'Position', [500, 150, 450, 230]);
-    
+
     % Create text area for style classification display
     styleText = uitextarea(stylePanel, 'Position', [10, 10, 430, 190], 'Editable', 'off');
     styleText.FontName = 'Consolas';
@@ -34,12 +34,12 @@ function handwritingAnalysisGUI()
     originalAxes.Position = [10, 10, 430, 190];
     originalAxes.XTick = [];
     originalAxes.YTick = [];
-    
+
     processedAxes = uiaxes(processedPanel);
     processedAxes.Position = [10, 10, 430, 190];
     processedAxes.XTick = [];
     processedAxes.YTick = [];
-    
+
     % Declare the image path for analysis
     imgPath = '';
     inputImg = [];
@@ -54,25 +54,27 @@ function handwritingAnalysisGUI()
         if filename ~= 0
             imgPath = fullfile(pathname, filename);
             disp(['Selected Image: ', imgPath]);
-            
+
             % Display the selected image
             inputImg = imread(imgPath);
             imshow(inputImg, 'Parent', originalAxes);
             title(originalAxes, 'Original Image');
-            
+
             % Clear processed images when new image is selected
             cla(processedAxes);
-            
+
             % Clear feature and style text areas
             featureText.Value = '';
             styleText.Value = '';
         else
             disp('No file selected');
         end
+
     end
 
     % Function to run analysis
     function analyzeImage()
+
         if isempty(imgPath)
             uialert(fig, 'Please select an image first.', 'Error', 'Icon', 'error');
             return;
@@ -89,12 +91,14 @@ function handwritingAnalysisGUI()
         processedImages.bw_horizontal = bw_horizontal;
         processedImages.bw_vertical = bw_vertical;
         processedImages.skeleton = skeleton;
-        
+
         % Save the processed images to files
         savePath = fullfile(fileparts(imgPath), 'processed_images');
+
         if ~exist(savePath, 'dir')
             mkdir(savePath);
         end
+
         % Save each processed image with a descriptive filename
         imwrite(bw, fullfile(savePath, 'binary.png'));
         imwrite(bw_inverted, fullfile(savePath, 'inverted.png'));
@@ -109,19 +113,19 @@ function handwritingAnalysisGUI()
         % Display processed images
         imshow(bw_noiseRemoved, 'Parent', processedAxes);
         title(processedAxes, 'Processed Image');
-        
+
         % Call feature extraction function
         disp('Extracting features...');
-        
+
         % Create bw_combined for feature extraction
         bw_combined = bw_noiseRemoved;
-        
+
         % Call the feature extraction function
         [group1Features, group2Features, group3Features] = feature_ext(bw, bw_inverted, bw_noiseRemoved, bw_disk, bw_horizontal, bw_vertical, skeleton, bw_combined);
-        
+
         % Display extracted features in the text area
         displayFeatures(group1Features, group2Features, group3Features);
-        
+
         % Perform style classification based on extracted features
         classifyHandwritingStyle(group1Features, group2Features, group3Features);
     end
@@ -131,48 +135,49 @@ function handwritingAnalysisGUI()
         % Create a string cell array to hold feature results
         featLines = cell(30, 1);
         lineIdx = 1;
-        
+
         % Group 1: Cursive & Print Handwriting
         featLines{lineIdx} = '=== CURSIVE FEATURES ==='; lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Connected Components: %.2f', group1.cursive.connectedComponents); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Smooth Curvature: %.2f', group1.cursive.smoothCurvature); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Continuous Stroke: %.2f', group1.cursive.continuousStroke); lineIdx = lineIdx + 1;
         featLines{lineIdx} = ' '; lineIdx = lineIdx + 1;
-        
+
         % Group 1: Print Features
         featLines{lineIdx} = '=== PRINT FEATURES ==='; lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Separate Letters: %.2f', group1.print.separateLetters); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Upright Orientation: %.2f', group1.print.uprightOrientation); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Balanced Stroke Shapes: %.2f', group1.print.balancedStrokeShapes); lineIdx = lineIdx + 1;
         featLines{lineIdx} = ' '; lineIdx = lineIdx + 1;
-        
+
         % Group 2: Block Letters & Slanted Handwriting
         featLines{lineIdx} = '=== BLOCK LETTER FEATURES ==='; lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Line Presence: %.2f', group2.blockLetters.linePresence); lineIdx = lineIdx + 1;
-        featLines{lineIdx} = sprintf('Separation Consistency: %.2f', group2.blockLetters.separationConsistency); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Stroke Length Consistency: %.2f', group2.blockLetters.strokeLengthConsistency); lineIdx = lineIdx + 1;
+        featLines{lineIdx} = sprintf('Dominant HV Lines: %.2f', group2.blockLetters.hvDominance); lineIdx = lineIdx + 1;
         featLines{lineIdx} = ' '; lineIdx = lineIdx + 1;
-        
+
         % Group 2: Slanted Features
         featLines{lineIdx} = '=== SLANTED FEATURES ==='; lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Avg Slant Angle: %.2f deg', group2.slanted.avgSlantAngle); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Letter Tilt Uniformity: %.2f', group2.slanted.letterTiltUniformity); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Vertical Stroke Count: %.2f', group2.slanted.verticalStrokeCount); lineIdx = lineIdx + 1;
         featLines{lineIdx} = ' '; lineIdx = lineIdx + 1;
-        
+
         % Group 3: Angular Features
         featLines{lineIdx} = '=== ANGULAR FEATURES ==='; lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Edge Orientation Variance: %.2f', group3.angular.edgeOrientationVariance); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Circularity: %.2f', group3.angular.circularity); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Corner Density: %.2f', group3.angular.cornerDensity); lineIdx = lineIdx + 1;
         featLines{lineIdx} = ' '; lineIdx = lineIdx + 1;
-        
+
         % Group 3: Calligraphy Features
         featLines{lineIdx} = '=== CALLIGRAPHY FEATURES ==='; lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Stroke Width Variation: %.2f', group3.calligraphy.strokeWidthVariation); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Flourishes: %.2f', group3.calligraphy.flourishes); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Smooth Curves: %.2f', group3.calligraphy.smoothCurves); lineIdx = lineIdx + 1;
-        
+        featLines{lineIdx} = sprintf('Letter Extension: %.2f', group3.calligraphy.extendedAscDescMeasure); lineIdx = lineIdx + 1;
+
         % Remove any empty cells (which would be []) before assignment
         featLines = featLines(~cellfun(@isempty, featLines));
         featureText.Value = featLines;
@@ -182,62 +187,64 @@ function handwritingAnalysisGUI()
     function classifyHandwritingStyle(group1, group2, group3)
         % Compute style scores
         styleScores = struct();
-        
+
         % Calculate scores for different handwriting styles
         % Cursive score
         styleScores.cursive = group1.cursive.connectedComponents * 0.4 + ...
-                              group1.cursive.smoothCurvature * 0.3 + ...
-                              group1.cursive.continuousStroke * 0.3;
-        
+            group1.cursive.smoothCurvature * 0.3 + ...
+            group1.cursive.continuousStroke * 0.3;
+
         % Print score
-        styleScores.print = group1.print.separateLetters * 0.4 + ...
-                            (1 - abs(group1.print.uprightOrientation)/90) * 0.3 + ...
-                            group1.print.balancedStrokeShapes * 0.3;
-        
+        clampedSepLetters = min(group1.print.separateLetters, 3.0);
+        styleScores.print = clampedSepLetters * 0.3 + ...
+            (1 - abs(group1.print.uprightOrientation) / 90) * 0.3 + ...
+            group1.print.balancedStrokeShapes * 0.4;
+
         % Block letters score
-        styleScores.block = group2.blockLetters.linePresence * 0.4 + ...
-                           group2.blockLetters.separationConsistency * 0.3 + ...
-                           group2.blockLetters.strokeLengthConsistency * 0.3;
-        
+        styleScores.block = group2.blockLetters.linePresence * 0.25 + ... % lowered
+            group2.blockLetters.strokeLengthConsistency * 0.25 + ...
+            group2.blockLetters.hvDominance * 0.5;
+
         % Slanted score
         styleScores.slanted = (abs(group2.slanted.avgSlantAngle) / 45) * 0.5 + ...
-                             group2.slanted.letterTiltUniformity * 0.3 + ...
-                             (1 - group2.slanted.verticalStrokeCount/10) * 0.2;
-        
+            group2.slanted.letterTiltUniformity * 0.3 + ...
+            (1 - group2.slanted.verticalStrokeCount / 10) * 0.2;
+
         % Angular score
         styleScores.angular = group3.angular.edgeOrientationVariance * 0.3 + ...
-                             (1 - group3.angular.circularity) * 0.4 + ...
-                             group3.angular.cornerDensity * 0.3;
-        
+            (1 - group3.angular.circularity) * 0.4 + ...
+            group3.angular.cornerDensity * 0.25;
+
         % Calligraphy score
-        styleScores.calligraphy = group3.calligraphy.strokeWidthVariation * 0.4 + ...
-                                 group3.calligraphy.flourishes * 0.3 + ...
-                                 group3.calligraphy.smoothCurves * 0.3;
-        
+        styleScores.calligraphy = group3.calligraphy.strokeWidthVariation * 0.3 + ...
+            group3.calligraphy.flourishes * 0.25 + ...
+            group3.calligraphy.smoothCurves * 0.25 + ...
+            group3.calligraphy.extendedAscDescMeasure * 0.2;
+
         % Normalize scores
         styleNames = fieldnames(styleScores);
         styleValues = zeros(length(styleNames), 1);
-        
+
         for i = 1:length(styleNames)
             styleValues(i) = styleScores.(styleNames{i});
         end
-        
+
         % Sort styles by score (descending)
         [sortedScores, sortIndices] = sort(styleValues, 'descend');
-        
+
         % Display top 3 styles
         styleLines = cell(7, 1);
         styleLines{1} = 'HANDWRITING STYLE ANALYSIS:';
         styleLines{2} = '========================';
-        
+
         for i = 1:min(3, length(styleNames))
             styleIdx = sortIndices(i);
-            styleLines{i+2} = sprintf('%d. %s (%.2f%%)', i, upper(styleNames{styleIdx}), sortedScores(i)*100);
+            styleLines{i + 2} = sprintf('%d. %s (%.2f%%)', i, upper(styleNames{styleIdx}), sortedScores(i) * 100);
         end
-        
+
         % Add primary characteristic description
         primaryStyle = styleNames{sortIndices(1)};
-        
+
         switch primaryStyle
             case 'cursive'
                 styleLines{6} = 'Primary characteristics: Connected letters, flowing strokes,';
@@ -258,8 +265,9 @@ function handwritingAnalysisGUI()
                 styleLines{6} = 'Primary characteristics: Thick-thin stroke variation, decorative elements,';
                 styleLines{7} = 'smooth curves and flowing strokes.';
         end
-        
+
         % Update style text area
         styleText.Value = styleLines;
     end
+
 end

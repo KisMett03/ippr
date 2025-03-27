@@ -1,7 +1,7 @@
 function [bw, bw_inverted, bw_noiseRemoved, bw_disk, bw_horizontal, bw_vertical, skeleton] = preprocess(inputImg)
     % Set default target height if not provided
     if nargin < 2
-        targetHeight = 1200; % Standard height for processing
+        targetHeight = 1200 % Standard height for processing
     end
 
     % Convert to grayscale if the image is in RGB
