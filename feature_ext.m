@@ -127,7 +127,6 @@ function letterSegments = segmentHandwriting(bw)
 end
 
 % Cursive Features Done
-
 function connectivity = extractConnectivity(bw_vertical)
     % Compute connected components per word to gauge letter connectivity (cursive).
     wordSegments = segmentWords(bw_vertical);
@@ -137,7 +136,7 @@ function connectivity = extractConnectivity(bw_vertical)
         se = strel('disk', 3);
         bw_dilated = imdilate(bw_vertical, se);
         cc = bwconncomp(bw_dilated);
-        connectivity = cc.NumObjects;
+        rawConnectivity = cc.NumObjects;
     else
         % Calculate total connected components across words
         totalComponents = 0;
@@ -153,9 +152,14 @@ function connectivity = extractConnectivity(bw_vertical)
         end
 
         % Average connected components per word (lower for cursive writing)
-        connectivity = totalComponents / numWords;
+        rawConnectivity = totalComponents / numWords;
     end
 
+    % Normalize to [0,1] range
+    % Lower values (closer to 1 component) indicate more cursive writing
+    % Cap at 10 components per word for normalization
+    maxComponents = 10;
+    connectivity = max(0, min(1, (maxComponents - rawConnectivity) / (maxComponents - 1)));
 end
 
 function smoothCurvatureVal = extractSmoothCurvature(bw_disk)
@@ -214,7 +218,6 @@ function continuousStrokeVal = extractContinuousStroke(skeleton)
 end
 
 % Print Features Done
-
 function separateLetters = extractSeparateLetters(bw_noiseRemoved)
     % Measures how separated the letters are (print style has high separation).
     % We erode slightly to split connected letters, then count components.
@@ -234,20 +237,16 @@ function separateLetters = extractSeparateLetters(bw_noiseRemoved)
         return;
     end
 
-    % Count valid letter components (filter out tiny noise components by area)
+    % Determine valid components and capture each component's area
     validComponents = 0;
     areas = [];
-
     for i = 1:length(letterSegments)
         seg = letterSegments{i};
         stats = regionprops(seg, 'Area');
-
         if ~isempty(stats)
-            % Take the largest connected area in this segment (in case of noise)
             segArea = max([stats.Area]);
             areas = [areas, segArea]; %#ok<AGROW>
         end
-
     end
 
     if isempty(areas)
@@ -262,19 +261,16 @@ function separateLetters = extractSeparateLetters(bw_noiseRemoved)
     for i = 1:length(letterSegments)
         seg = letterSegments{i};
         stats = regionprops(seg, 'Area');
-
         if ~isempty(stats) && max([stats.Area]) > minArea
             validComponents = validComponents + 1;
         end
-
     end
 
-    % Normalize by image size to account for scaling (larger images could have more letters)
+    % Normalize by image size to account for scaling (larger images have more letters)
     totalPixels = numel(bw_noiseRemoved);
-    separateLetters = validComponents * 100 / sqrt(totalPixels);
-
-    % Cap the value to a reasonable range (so extremely large counts don’t overly skew)
-    separateLetters = min(separateLetters, 10);
+    rawValue = validComponents * 100 / sqrt(totalPixels);
+    % Cap rawValue to a maximum of 10 to avoid skew and normalize to [0,1]
+    separateLetters = min(rawValue, 10) / 10;
 end
 
 function uprightOrientation = extractMinimalSlant(bw_noiseRemoved)
@@ -297,9 +293,9 @@ function uprightOrientation = extractMinimalSlant(bw_noiseRemoved)
         end
 
         if ~isempty(orientations)
-            uprightOrientation = mean(orientations);
+            rawOrientation = mean(orientations);
         else
-            uprightOrientation = 0;
+            rawOrientation = 0;
         end
 
     else
@@ -308,15 +304,17 @@ function uprightOrientation = extractMinimalSlant(bw_noiseRemoved)
 
         if numel(stats) > 1
             orientations = [stats.Orientation];
-            uprightOrientation = mean(orientations);
+            rawOrientation = mean(orientations);
         elseif ~isempty(stats)
-            uprightOrientation = stats.Orientation;
+            rawOrientation = stats.Orientation;
         else
-            uprightOrientation = 0;
+            rawOrientation = 0;
         end
 
     end
 
+    % Normalize to [0,1] where 1 = perfectly upright, 0 = maximum slant (45 degrees or more)
+    uprightOrientation = 1 - min(1, abs(rawOrientation) / 45);
 end
 
 function balancedStrokeShapes = extractBalancedStrokeShapes(bw_combined)
@@ -456,7 +454,6 @@ function strokeLengthConsistency = extractStrokeLengthConsistency(bw)
 end
 
 % Slanted Handwriting Features Done
-
 function avgSlantAngle = extractSlantAngle(bw)
     % Improved slant angle extraction using PCA on word segments.
     % Segment the image into words first.
@@ -502,12 +499,14 @@ function avgSlantAngle = extractSlantAngle(bw)
     end
 
     if isempty(weightedAngles)
-        avgSlantAngle = 0;
+        rawSlantAngle = 0;
     else
         % Compute area-weighted average of the slant angles.
-        avgSlantAngle = sum(weightedAngles .* segmentAreas) / sum(segmentAreas);
+        rawSlantAngle = sum(weightedAngles .* segmentAreas) / sum(segmentAreas);
     end
 
+    % Normalize to [0,1] where 1 = maximum slant (90 degrees), 0 = no slant
+    avgSlantAngle = min(1, rawSlantAngle / 90);
 end
 
 function tiltUniformity = extractLetterTiltUniformity(bw_inverted)
@@ -585,35 +584,38 @@ function verticalStrokeCount = extractVerticalStrokeCount(bw_vertical)
 
         end
 
-        verticalStrokeCount = count;
-        return;
-    end
+        rawCount = count;
+    else
+        totalCount = 0;
 
-    totalCount = 0;
+        for i = 1:length(letterSegments)
+            seg = letterSegments{i};
+            cc = bwconncomp(seg);
+            stats = regionprops(cc, 'BoundingBox');
+            count = 0;
 
-    for i = 1:length(letterSegments)
-        seg = letterSegments{i};
-        cc = bwconncomp(seg);
-        stats = regionprops(cc, 'BoundingBox');
-        count = 0;
+            for j = 1:length(stats)
+                bbox = stats(j).BoundingBox;
 
-        for j = 1:length(stats)
-            bbox = stats(j).BoundingBox;
+                if bbox(4) / (bbox(3) + eps) > 3
+                    count = count + 1;
+                end
 
-            if bbox(4) / (bbox(3) + eps) > 3
-                count = count + 1;
             end
 
+            totalCount = totalCount + count;
         end
 
-        totalCount = totalCount + count;
+        rawCount = totalCount;
     end
 
-    verticalStrokeCount = totalCount;
+    % Normalize to [0,1] based on reasonable maximum count
+    % Assuming 20 vertical strokes is a practical upper limit
+    maxCount = 20;
+    verticalStrokeCount = min(1, rawCount / maxCount);
 end
 
 % Angular Handwriting Features
-
 function orientationStd = extractEdgeOrientationVariance(bw)
     % Measures variability of stroke edge orientations.
     % High standard deviation of edge directions indicates more angular, multi-directional strokes.
@@ -645,7 +647,12 @@ function orientationStd = extractEdgeOrientationVariance(bw)
     end
 
     % Average orientation variance across letters (radians)
-    orientationStd = mean(stdValues);
+    rawVariance = mean(stdValues);
+
+    % Normalize to [0,1]
+    % Theoretical maximum standard deviation of uniform angles is ~1.5 radians
+    maxVariance = 1.5;
+    orientationStd = min(1, rawVariance / maxVariance);
 end
 
 function circularity = extractCircularity(bw)
@@ -979,7 +986,7 @@ function extendedAscDescMeasure = extractExtendedAscDesc(bw)
     %   bw - Binary image (white text on black) of the handwriting
     %
     % Output:
-    %   extendedAscDescMeasure - [0..1 or higher] measure of extended ascenders/descenders
+    %   extendedAscDescMeasure - [0..1] measure of extended ascenders/descenders
 
     letterSegments = segmentHandwriting(bw); % from your existing code
 
@@ -1022,9 +1029,13 @@ function extendedAscDescMeasure = extractExtendedAscDesc(bw)
     end
 
     if totalLetters == 0
-        extendedAscDescMeasure = 0;
+        rawRatio = 0;
     else
-        extendedAscDescMeasure = ratioSum / totalLetters;
+        rawRatio = ratioSum / totalLetters;
     end
 
+    % Normalize to [0,1]
+    % A ratio of 1.5 is considered very extended
+    maxRatio = 1.5;
+    extendedAscDescMeasure = min(1, rawRatio / maxRatio);
 end

@@ -1,5 +1,4 @@
-% filepath: d:\ippr\main.m
-function handwritingAnalysisGUI()
+function main()
     % Create a figure for the GUI
     fig = uifigure('Position', [100, 100, 1000, 700], 'Name', 'Handwriting Analysis');
 
@@ -14,7 +13,7 @@ function handwritingAnalysisGUI()
     processedPanel = uipanel(fig, 'Title', 'Processed Image', 'Position', [500, 400, 450, 230]);
 
     % Create panel for feature results
-    featurePanel = uipanel(fig, 'Title', 'Handwriting Features', 'Position', [50, 150, 450, 230]);
+    featurePanel = uipanel(fig, 'Title', 'Handwriting Features with nomalise values', 'Position', [50, 150, 450, 230]);
 
     % Create text area for feature results display
     featureText = uitextarea(featurePanel, 'Position', [10, 10, 430, 190], 'Editable', 'off');
@@ -159,7 +158,7 @@ function handwritingAnalysisGUI()
 
         % Group 2: Slanted Features
         featLines{lineIdx} = '=== SLANTED FEATURES ==='; lineIdx = lineIdx + 1;
-        featLines{lineIdx} = sprintf('Avg Slant Angle: %.2f deg', group2.slanted.avgSlantAngle); lineIdx = lineIdx + 1;
+        featLines{lineIdx} = sprintf('Avg Slant Angle: %.2f ', group2.slanted.avgSlantAngle); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Letter Tilt Uniformity: %.2f', group2.slanted.letterTiltUniformity); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Vertical Stroke Count: %.2f', group2.slanted.verticalStrokeCount); lineIdx = lineIdx + 1;
         featLines{lineIdx} = ' '; lineIdx = lineIdx + 1;
@@ -185,43 +184,45 @@ function handwritingAnalysisGUI()
 
     % Function to classify handwriting style based on features
     function classifyHandwritingStyle(group1, group2, group3)
-        % Compute style scores
+        % Compute style scores based on normalized features
+
         styleScores = struct();
 
-        % Calculate scores for different handwriting styles
-        % Cursive score
+        % Cursive score: higher connectivity (closer to 1), smooth curvature, and continuous stroke indicate cursive.
         styleScores.cursive = group1.cursive.connectedComponents * 0.4 + ...
             group1.cursive.smoothCurvature * 0.3 + ...
             group1.cursive.continuousStroke * 0.3;
 
-        % Print score
-        clampedSepLetters = min(group1.print.separateLetters, 3.0);
-        styleScores.print = clampedSepLetters * 0.3 + ...
-            (1 - abs(group1.print.uprightOrientation) / 90) * 0.3 + ...
+        % Print score: higher separate letters, upright orientation, and balanced stroke shapes indicate print.
+        styleScores.print = group1.print.separateLetters * 0.3 + ...
+            group1.print.uprightOrientation * 0.3 + ...
             group1.print.balancedStrokeShapes * 0.4;
 
-        % Block letters score
-        styleScores.block = group2.blockLetters.linePresence * 0.25 + ... % lowered
-            group2.blockLetters.strokeLengthConsistency * 0.25 + ...
-            group2.blockLetters.hvDominance * 0.5;
+        % Block letters score: marked by strong line presence, consistent stroke length, and dominant horizontal/vertical lines.
+        styleScores.block = group2.blockLetters.linePresence * 0.35 + ...
+            group2.blockLetters.strokeLengthConsistency * 0.4 + ...
+            group2.blockLetters.hvDominance * 0.25;
 
-        % Slanted score
-        styleScores.slanted = (abs(group2.slanted.avgSlantAngle) / 45) * 0.5 + ...
+        % Slanted score: a larger avg slant angle (normalized so that 1 means maximum slant) plus uniform tilt
+        % and fewer vertical strokes (thus we use 1 - verticalStrokeCount).
+        styleScores.slanted = group2.slanted.avgSlantAngle * 0.5 + ...
             group2.slanted.letterTiltUniformity * 0.3 + ...
-            (1 - group2.slanted.verticalStrokeCount / 10) * 0.2;
+            (1 - group2.slanted.verticalStrokeCount) * 0.2;
 
-        % Angular score
+        % Angular score: high edge orientation variance, low circularity (hence 1-circularity),
+        % and high corner density indicate an angular style.
         styleScores.angular = group3.angular.edgeOrientationVariance * 0.3 + ...
             (1 - group3.angular.circularity) * 0.4 + ...
             group3.angular.cornerDensity * 0.25;
 
-        % Calligraphy score
+        % Calligraphy score: high stroke width variation, decorative flourishes,
+        % smooth curves, and extended ascenders/descenders.
         styleScores.calligraphy = group3.calligraphy.strokeWidthVariation * 0.3 + ...
             group3.calligraphy.flourishes * 0.25 + ...
             group3.calligraphy.smoothCurves * 0.25 + ...
             group3.calligraphy.extendedAscDescMeasure * 0.2;
 
-        % Normalize scores
+        % Gather style names and scores for comparison
         styleNames = fieldnames(styleScores);
         styleValues = zeros(length(styleNames), 1);
 
@@ -229,10 +230,10 @@ function handwritingAnalysisGUI()
             styleValues(i) = styleScores.(styleNames{i});
         end
 
-        % Sort styles by score (descending)
+        % Sort styles by descending score
         [sortedScores, sortIndices] = sort(styleValues, 'descend');
 
-        % Display top 3 styles
+        % Build output lines for style display
         styleLines = cell(7, 1);
         styleLines{1} = 'HANDWRITING STYLE ANALYSIS:';
         styleLines{2} = '========================';
@@ -242,7 +243,7 @@ function handwritingAnalysisGUI()
             styleLines{i + 2} = sprintf('%d. %s (%.2f%%)', i, upper(styleNames{styleIdx}), sortedScores(i) * 100);
         end
 
-        % Add primary characteristic description
+        % Add primary characteristic description based on the highest-scoring style
         primaryStyle = styleNames{sortIndices(1)};
 
         switch primaryStyle
@@ -266,7 +267,7 @@ function handwritingAnalysisGUI()
                 styleLines{7} = 'smooth curves and flowing strokes.';
         end
 
-        % Update style text area
+        % Update the style text area with the results
         styleText.Value = styleLines;
     end
 
