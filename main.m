@@ -94,18 +94,18 @@ function main()
         % Save the processed images to files
         savePath = fullfile(fileparts(imgPath), 'processed_images');
 
-        if ~exist(savePath, 'dir')
-            mkdir(savePath);
-        end
+        % if ~exist(savePath, 'dir')
+        %     mkdir(savePath);
+        % end
 
-        % Save each processed image with a descriptive filename
-        imwrite(bw, fullfile(savePath, 'binary.png'));
-        imwrite(bw_inverted, fullfile(savePath, 'inverted.png'));
-        imwrite(bw_noiseRemoved, fullfile(savePath, 'noise_removed.png'));
-        imwrite(bw_disk, fullfile(savePath, 'morphology_disk.png'));
-        imwrite(bw_horizontal, fullfile(savePath, 'horizontal_elements.png'));
-        imwrite(bw_vertical, fullfile(savePath, 'vertical_elements.png'));
-        imwrite(skeleton, fullfile(savePath, 'skeleton.png'));
+        % % Save each processed image with a descriptive filename
+        % imwrite(bw, fullfile(savePath, 'binary.png'));
+        % imwrite(bw_inverted, fullfile(savePath, 'inverted.png'));
+        % imwrite(bw_noiseRemoved, fullfile(savePath, 'noise_removed.png'));
+        % imwrite(bw_disk, fullfile(savePath, 'morphology_disk.png'));
+        % imwrite(bw_horizontal, fullfile(savePath, 'horizontal_elements.png'));
+        % imwrite(bw_vertical, fullfile(savePath, 'vertical_elements.png'));
+        % imwrite(skeleton, fullfile(savePath, 'skeleton.png'));
 
         % Display confirmation message
         disp('Processed images saved to: ' + string(savePath));
@@ -254,8 +254,8 @@ function main()
                 styleLines{6} = 'Primary characteristics: Separated letters, upright orientation,';
                 styleLines{7} = 'balanced stroke shapes similar to printed text.';
             case 'block'
-                styleLines{6} = 'Primary characteristics: Strong straight lines, right-angle corners,';
-                styleLines{7} = 'uniform stroke length resembling block capitals.';
+                styleLines{6} = 'Primary characteristics: Right angle strokes, Consistency of letter size ratio';
+                styleLines{7} = 'uniform letter height resembling block capitals.';
             case 'slanted'
                 styleLines{6} = 'Primary characteristics: Consistent letter tilt, fewer vertical strokes,';
                 styleLines{7} = 'uniform angle across characters.';

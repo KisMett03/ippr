@@ -408,17 +408,6 @@ end
 
 function aspectConsistency = measureLetterAspectRatioConsistency(bw)
     % Measures consistency of letter aspect ratios (width/height) for block letters.
-    % - Uses segmentHandwriting to extract individual letter regions.
-    % - For each letter, it picks the component with the largest area and computes
-    %   its aspect ratio.
-    % - It then computes the coefficient of variation (CV) of these ratios and
-    %   converts it into a normalized consistency score in [0,1] (1 indicates perfect consistency).
-    %
-    % Input:
-    %   bw - Binary image containing letters.
-    % Output:
-    %   aspectConsistency - Normalized consistency score in [0,1].
-
     letterSegments = segmentHandwriting(bw);
 
     if isempty(letterSegments)
@@ -480,10 +469,11 @@ function heightConsistency = measureLetterHeightConsistency(bw)
 
     % Compute height-to-width ratios for each valid letter
     ratios = [];
-    
+
     for i = 1:length(letterSegments)
         seg = letterSegments{i};
         stats = regionprops(seg, 'BoundingBox', 'Area');
+
         if ~isempty(stats)
             % Choose the component with the largest area
             areas = [stats.Area];
@@ -494,7 +484,9 @@ function heightConsistency = measureLetterHeightConsistency(bw)
                 ratio = bbox(4) / bbox(3); % height-to-width ratio
                 ratios = [ratios, ratio]; %#ok<AGROW>
             end
+
         end
+
     end
 
     if isempty(ratios)
@@ -510,13 +502,14 @@ function heightConsistency = measureLetterHeightConsistency(bw)
     lowerBound = Q1 - 1.5 * IQR;
     upperBound = Q3 + 1.5 * IQR;
     filteredRatios = ratios(ratios >= lowerBound & ratios <= upperBound);
-    
+
     if isempty(filteredRatios)
         filteredRatios = ratios;
     end
 
     % Compute the coefficient of variation (CV) of the remaining ratios
     meanRatio = mean(filteredRatios);
+
     if meanRatio == 0
         heightConsistency = 1;
     else
@@ -524,6 +517,7 @@ function heightConsistency = measureLetterHeightConsistency(bw)
         % Convert CV to a consistency score (lower CV means higher consistency)
         heightConsistency = max(0, min(1, 1 - cv));
     end
+
 end
 
 % Slanted Handwriting Features Done
