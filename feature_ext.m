@@ -31,14 +31,15 @@ function [group1Features, group2Features, group3Features] = feature_ext(bw, bw_i
     %% Group 2: Block Letters and Slanted Handwriting Features
 
     % Block Letters Features
-    % Horizontal/Vertical Line Presence (block letters have many straight strokes)
-    group2Features.blockLetters.linePresence = extractLinePresence(bw_vertical, bw_horizontal);
 
     % Dominant Horizontal/Vertical Lines (strong indicator of block letters)
     group2Features.blockLetters.hvDominance = extractDominantHVLines(bw);
 
-    % Uniform Stroke Lengths (consistent stroke lengths in letters)
-    group2Features.blockLetters.strokeLengthConsistency = extractStrokeLengthConsistency(bw);
+    % Extracts bounding boxes for individual letters and computes the mean
+    group2Features.blockLetters.aspectConsistency = measureLetterAspectRatioConsistency(bw);
+
+    % Measures consistency of letter aspect ratios based on the bounding boxes
+    group2Features.blockLetters.heightConsistency = measureLetterHeightConsistency(bw);
 
     % Slanted Handwriting Features
     % Slant Angle Consistency (consistent tilt across writing)
@@ -240,13 +241,16 @@ function separateLetters = extractSeparateLetters(bw_noiseRemoved)
     % Determine valid components and capture each component's area
     validComponents = 0;
     areas = [];
+
     for i = 1:length(letterSegments)
         seg = letterSegments{i};
         stats = regionprops(seg, 'Area');
+
         if ~isempty(stats)
             segArea = max([stats.Area]);
             areas = [areas, segArea]; %#ok<AGROW>
         end
+
     end
 
     if isempty(areas)
@@ -261,9 +265,11 @@ function separateLetters = extractSeparateLetters(bw_noiseRemoved)
     for i = 1:length(letterSegments)
         seg = letterSegments{i};
         stats = regionprops(seg, 'Area');
+
         if ~isempty(stats) && max([stats.Area]) > minArea
             validComponents = validComponents + 1;
         end
+
     end
 
     % Normalize by image size to account for scaling (larger images have more letters)
@@ -356,24 +362,6 @@ end
 
 % Block Letters Features
 
-function linePresence = extractLinePresence(bw_vertical, bw_horizontal)
-    % Measures the prevalence of long straight horizontal and vertical strokes.
-    % Dilate the detected horizontal and vertical line components for robustness.
-
-    se_h = strel('line', 5, 0);
-    bw_horizontal_dilated = imdilate(bw_horizontal, se_h);
-    se_v = strel('line', 5, 90);
-    bw_vertical_dilated = imdilate(bw_vertical, se_v);
-
-    totalPixels = numel(bw_vertical);
-    verticalScore = sum(bw_vertical_dilated(:)) / totalPixels;
-    horizontalScore = sum(bw_horizontal_dilated(:)) / totalPixels;
-
-    % Average vertical and horizontal line density (0 to 1)
-    linePresence = (verticalScore + horizontalScore) / 2;
-    linePresence = max(0, min(1, linePresence));
-end
-
 function hvDominance = extractDominantHVLines(bw)
     % extractDominantHVLines measures how many edges/strokes are near 0 or 90 deg
     % indicative of block letters with strong horizontal/vertical lines.
@@ -418,39 +406,124 @@ function hvDominance = extractDominantHVLines(bw)
     hvDominance = hvCount / totalEdgePixels;
 end
 
-function strokeLengthConsistency = extractStrokeLengthConsistency(bw)
-    % Evaluates if stroke lengths in the letters are similar (block letters tend to).
-    % Uses skeleton segments to measure stroke lengths in each letter.
+function aspectConsistency = measureLetterAspectRatioConsistency(bw)
+    % Measures consistency of letter aspect ratios (width/height) for block letters.
+    % - Uses segmentHandwriting to extract individual letter regions.
+    % - For each letter, it picks the component with the largest area and computes
+    %   its aspect ratio.
+    % - It then computes the coefficient of variation (CV) of these ratios and
+    %   converts it into a normalized consistency score in [0,1] (1 indicates perfect consistency).
+    %
+    % Input:
+    %   bw - Binary image containing letters.
+    % Output:
+    %   aspectConsistency - Normalized consistency score in [0,1].
 
     letterSegments = segmentHandwriting(bw);
 
     if isempty(letterSegments)
-        letterSegments = {bw};
+        aspectConsistency = 1;
+        return;
     end
 
-    consistencyScores = zeros(length(letterSegments), 1);
+    ratios = zeros(length(letterSegments), 1);
 
     for i = 1:length(letterSegments)
         seg = letterSegments{i};
-        % Skeletonize the letter segment
-        skeleton = bwskel(seg);
-        % Measure connected stroke lengths (by area of skeleton components)
-        cc = bwconncomp(skeleton);
-        stats = regionprops(cc, 'Area');
-        areas = [stats.Area];
+        stats = regionprops(seg, 'BoundingBox', 'Area');
 
-        if isempty(areas) || mean(areas) == 0
-            consistencyScores(i) = 1; % if no strokes found, assume full consistency
-        else
-            % Coefficient of variation of stroke lengths
-            cv = std(areas) / mean(areas);
-            consistencyScores(i) = max(0, min(1, 1 - cv));
+        if ~isempty(stats)
+            % Choose the bounding box corresponding to the largest component
+            areas = [stats.Area];
+            [~, maxIdx] = max(areas);
+            bbox = stats(maxIdx).BoundingBox; % [x, y, width, height]
+            ratios(i) = bbox(3) / bbox(4); % Compute aspect ratio (width/height)
         end
 
     end
 
-    % Average consistency across letters
-    strokeLengthConsistency = mean(consistencyScores);
+    meanRatio = mean(ratios);
+
+    if meanRatio == 0
+        aspectConsistency = 1;
+    else
+        % Lower coefficient of variation (CV) indicates higher consistency.
+        cv = std(ratios) / meanRatio;
+        aspectConsistency = max(0, min(1, 1 - cv));
+    end
+
+end
+
+function heightConsistency = measureLetterHeightConsistency(bw)
+    % Input:
+    %   bw - Binary image containing letters.
+    % Output:
+    %   heightConsistency - Normalized consistency score in [0,1].
+    %
+    % This implementation applies morphological filtering to improve segmentation,
+    % segments the image into individual letters, computes the height-to-width ratio
+    % for each letter, removes outlier ratios, and then calculates the consistency as
+    % 1 - (coefficient of variation).
+
+    % Apply morphological filtering to improve segmentation
+    se = strel('disk', 1);
+    bw_filtered = imopen(bw, se);
+    bw_filtered = imclose(bw_filtered, se);
+
+    % Segment the image into individual letters using the filtered image
+    letterSegments = segmentHandwriting(bw_filtered);
+
+    if isempty(letterSegments)
+        heightConsistency = 1; % No letters detected; assume perfect consistency.
+        return;
+    end
+
+    % Compute height-to-width ratios for each valid letter
+    ratios = [];
+    
+    for i = 1:length(letterSegments)
+        seg = letterSegments{i};
+        stats = regionprops(seg, 'BoundingBox', 'Area');
+        if ~isempty(stats)
+            % Choose the component with the largest area
+            areas = [stats.Area];
+            [~, maxIdx] = max(areas);
+            bbox = stats(maxIdx).BoundingBox; % [x, y, width, height]
+            % Ignore letters with very small height
+            if bbox(4) > 5 && bbox(3) > 0
+                ratio = bbox(4) / bbox(3); % height-to-width ratio
+                ratios = [ratios, ratio]; %#ok<AGROW>
+            end
+        end
+    end
+
+    if isempty(ratios)
+        heightConsistency = 1;
+        return;
+    end
+
+    % Remove outlier ratios using the IQR method
+    medRatio = median(ratios);
+    Q1 = quantile(ratios, 0.25);
+    Q3 = quantile(ratios, 0.75);
+    IQR = Q3 - Q1;
+    lowerBound = Q1 - 1.5 * IQR;
+    upperBound = Q3 + 1.5 * IQR;
+    filteredRatios = ratios(ratios >= lowerBound & ratios <= upperBound);
+    
+    if isempty(filteredRatios)
+        filteredRatios = ratios;
+    end
+
+    % Compute the coefficient of variation (CV) of the remaining ratios
+    meanRatio = mean(filteredRatios);
+    if meanRatio == 0
+        heightConsistency = 1;
+    else
+        cv = std(filteredRatios) / meanRatio;
+        % Convert CV to a consistency score (lower CV means higher consistency)
+        heightConsistency = max(0, min(1, 1 - cv));
+    end
 end
 
 % Slanted Handwriting Features Done

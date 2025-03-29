@@ -151,8 +151,8 @@ function main()
 
         % Group 2: Block Letters & Slanted Handwriting
         featLines{lineIdx} = '=== BLOCK LETTER FEATURES ==='; lineIdx = lineIdx + 1;
-        featLines{lineIdx} = sprintf('Line Presence: %.2f', group2.blockLetters.linePresence); lineIdx = lineIdx + 1;
-        featLines{lineIdx} = sprintf('Stroke Length Consistency: %.2f', group2.blockLetters.strokeLengthConsistency); lineIdx = lineIdx + 1;
+        featLines{lineIdx} = sprintf('Aspected Character Ratio: %.2f', group2.blockLetters.aspectConsistency); lineIdx = lineIdx + 1;
+        featLines{lineIdx} = sprintf('Letter Height Consistency: %.2f', group2.blockLetters.heightConsistency); lineIdx = lineIdx + 1;
         featLines{lineIdx} = sprintf('Dominant HV Lines: %.2f', group2.blockLetters.hvDominance); lineIdx = lineIdx + 1;
         featLines{lineIdx} = ' '; lineIdx = lineIdx + 1;
 
@@ -199,9 +199,9 @@ function main()
             group1.print.balancedStrokeShapes * 0.4;
 
         % Block letters score: marked by strong line presence, consistent stroke length, and dominant horizontal/vertical lines.
-        styleScores.block = group2.blockLetters.linePresence * 0.35 + ...
-            group2.blockLetters.strokeLengthConsistency * 0.4 + ...
-            group2.blockLetters.hvDominance * 0.25;
+        styleScores.block = group2.blockLetters.heightConsistency * 0.4 + ...
+            group2.blockLetters.aspectConsistency * 0.5 + ...
+            group2.blockLetters.hvDominance * 0.1;
 
         % Slanted score: a larger avg slant angle (normalized so that 1 means maximum slant) plus uniform tilt
         % and fewer vertical strokes (thus we use 1 - verticalStrokeCount).
